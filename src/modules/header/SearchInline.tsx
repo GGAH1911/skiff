@@ -171,6 +171,7 @@ export const SearchInline = forwardRef<SearchInlineHandle, Props>(
                   if (compact && !q) setOpenInCompact(false);
                 }}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (e.key === "Enter") {
                     e.preventDefault();
                     findDirection(!e.shiftKey);

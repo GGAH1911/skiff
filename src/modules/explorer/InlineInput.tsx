@@ -74,6 +74,10 @@ export function InlineInput({
       placeholder={placeholder}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
+        // Don't commit while an IME composition is in progress (CJK input):
+        // the Enter that commits a Korean/Japanese/Chinese syllable would
+        // otherwise finalize the rename with a half-typed name.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         if (e.key === "Enter") {
           e.preventDefault();
           commit();

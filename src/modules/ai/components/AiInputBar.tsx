@@ -246,6 +246,10 @@ export function AiInputBar() {
                 onClick={updateTrigger}
                 onSelect={updateTrigger}
                 onKeyDown={(e) => {
+                  // Ignore keystrokes that are part of an IME composition
+                  // (e.g. Korean/Japanese/Chinese). Committing the composition
+                  // with Enter must NOT submit the message.
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   if (pickerOpen) {
                     const items = fileTrigger ? filteredFiles : filteredItems;
                     if (e.key === "ArrowDown") {

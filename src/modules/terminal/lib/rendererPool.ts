@@ -159,7 +159,61 @@ function createSlot(): Slot {
 
   attachWebgl(slot);
 
+  // CJK IME (Korean / Japanese / Chinese) input. WebKit — the engine behind
+  // Tauri's webview on macOS/Linux — does NOT fire composition events and
+  // reports each composing keystroke as keyCode 229 with `isComposing` false.
+  // xterm.js relies on composition events + keyCode 229, so it forwards only
+  // the FIRST jamo of each syllable (it drops the `insertReplacementText`
+  // updates that build the syllable in place), turning "안녕" into "ㅇㄴ".
+  //
+  // Fix: mirror the textarea to the PTY ourselves. xterm still forwards plain
+  // `insertText` (appends, including ASCII), so for every OTHER input type
+  // (insertReplacementText, deletes, …) we send erase (DEL) + the new suffix so
+  // the PTY always matches the textarea. On engines that DO fire composition
+  // events (WebView2/Chromium), `composing` is true and xterm owns the flow —
+  // we then stay out of the way to avoid double input.
+  let composing = false;
+  let imeMirror = "";
+  const ta = term.textarea;
+  ta?.addEventListener("compositionstart", () => {
+    composing = true;
+  });
+  ta?.addEventListener("compositionend", () => {
+    composing = false;
+  });
+  ta?.addEventListener("input", (e) => {
+    const value = ta.value;
+    // `insertText` (and anything while real composition events are firing) is
+    // already forwarded by xterm — just keep our mirror aligned.
+    if ((e as InputEvent).inputType === "insertText" || composing) {
+      imeMirror = value;
+      return;
+    }
+    // xterm dropped this edit (IME syllable rebuild, delete, …). Reconcile the
+    // PTY with the textarea: erase the changed tail, then send the new tail.
+    let common = 0;
+    const max = Math.min(imeMirror.length, value.length);
+    while (common < max && imeMirror[common] === value[common]) common++;
+    const out = "\x7f".repeat(imeMirror.length - common) + value.slice(common);
+    imeMirror = value;
+    if (!out) return;
+    const leafId = slot.currentLeafId;
+    if (leafId !== null) adapter?.resolveLeaf(leafId)?.writeToPty(out);
+  });
+
   term.attachCustomKeyEventHandler((event) => {
+    // While an IME composition is in flight, don't let xterm process the key —
+    // returning false stops xterm's broken keyCode-229 textarea-diff path; the
+    // textarea `input` listener above is the single source of truth for IME
+    // text. (keyCode 229 covers WebKit, the others cover composition engines.)
+    if (
+      composing ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.key === "Process"
+    ) {
+      return false;
+    }
     const leafId = slot.currentLeafId;
     if (leafId === null) return false;
     const bridge = adapter?.resolveLeaf(leafId);

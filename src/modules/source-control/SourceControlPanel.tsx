@@ -200,6 +200,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
   }, [scm.actionError, scm.actionMessage, scm.remoteError]);
 
   const handleCommitShortcut = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Skip while an IME composition is active so the Enter that commits a CJK
+    // syllable doesn't trigger a git commit mid-composition.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (
       event.key === "Enter" &&
       (event.metaKey || event.ctrlKey) &&

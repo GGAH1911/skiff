@@ -98,6 +98,7 @@ export function NewEditorDialog({
             setError(null);
           }}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") {
               e.preventDefault();
               void submit();
