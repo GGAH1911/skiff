@@ -60,6 +60,9 @@ pub fn fs_search(
     let cap = limit.unwrap_or(200).min(1000);
     let show_hidden = show_hidden.unwrap_or(false);
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::search(conn, &root, &query, cap, show_hidden);
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
@@ -160,6 +163,9 @@ pub fn fs_list_files(
     let depth = max_depth.unwrap_or(DEFAULT_DEPTH).clamp(1, HARD_DEPTH);
     let show_hidden = show_hidden.unwrap_or(false);
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::list_files(conn, &root, cap, depth, show_hidden);
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));

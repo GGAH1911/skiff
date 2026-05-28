@@ -24,6 +24,13 @@ if [ -z "$__TERAX_HOOKS_LOADED" ]; then
   # on reload, guard with a flag.
   [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"
 
+  # Put the `terax` CLI on PATH (after the user's profile so it isn't clobbered)
+  # so agents in this terminal can run `terax new-terminal …`, `terax list`.
+  case ":$PATH:" in
+    *":$TERAX_BIN:"*) ;;
+    *) [ -n "$TERAX_BIN" ] && export PATH="$TERAX_BIN:$PATH" ;;
+  esac
+
   _terax_urlencode() {
     local LC_ALL=C s="$1" i c
     for (( i=0; i<${#s}; i++ )); do

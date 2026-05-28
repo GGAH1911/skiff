@@ -47,6 +47,16 @@ pub async fn pty_open(
     on_exit: Channel<i32>,
 ) -> Result<u32, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    // Terminals are always a local shell. When the file workspace is a remote
+    // SSH connection, the requested cwd is a remote path that doesn't exist on
+    // this machine — drop it so the shell opens in the local default dir
+    // instead of failing the spawn. (Use `ssh <host>` in the terminal to get a
+    // remote shell.)
+    let cwd = if workspace.ssh_conn().is_some() {
+        None
+    } else {
+        cwd
+    };
     authorize_user_spawn_cwd(&registry, cwd.as_deref(), &workspace).map_err(|e| {
         log::warn!("pty_open: cwd rejected: {e}");
         e

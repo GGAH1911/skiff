@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, fs, git, net, pty, secrets, shell, workspace};
+use modules::{agent, cli, fs, git, net, pty, secrets, shell, ssh, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_window_state::StateFlags;
@@ -85,6 +85,12 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Dual-mode: `terax <subcommand>` acts as a CLI client against the running
+    // app's control socket and exits without ever creating a window.
+    if let Some(code) = cli::try_run_cli() {
+        std::process::exit(code);
+    }
+
     let cli_dir = parse_launch_dir();
     workspace::init_launch_cwd(cli_dir.as_deref());
 
@@ -122,6 +128,12 @@ pub fn run() {
             registry
         })
         .manage(LaunchDir(Mutex::new(cli_dir)))
+        .setup(|app| {
+            // Start the `terax` CLI control socket so terminals (and the agents
+            // running in them) can drive the app: `terax new-terminal …`, etc.
+            cli::start_server(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pty::pty_open,
             pty::pty_write,
@@ -172,6 +184,11 @@ pub fn run() {
             workspace::wsl_list_distros,
             workspace::wsl_default_distro,
             workspace::wsl_home,
+            ssh::ssh_connect,
+            ssh::ssh_disconnect,
+            ssh::ssh_list_connections,
+            ssh::ssh_home,
+            cli::cli_respond,
             workspace::workspace_authorize,
             workspace::workspace_current_dir,
             get_launch_dir,

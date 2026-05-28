@@ -12,6 +12,7 @@ import {
   type SplitDir,
 } from "@/modules/terminal/lib/panes";
 import { disposeSession } from "@/modules/terminal/lib/useTerminalSession";
+import { currentWorkspaceEnv, type WorkspaceEnv } from "@/modules/workspace";
 
 // Matches the renderer slot pool size — over this we'd evict an active leaf.
 export const MAX_PANES_PER_TAB = 4;
@@ -25,6 +26,12 @@ export type TerminalTab = {
   activeLeafId: number;
   /** AI agent cannot read buffer / context of this terminal. */
   private?: boolean;
+  /**
+   * The workspace this tab lives in (local / WSL / SSH), captured at creation.
+   * Switching to this tab re-syncs the global workspace so the file explorer
+   * and fs operations follow it.
+   */
+  env: WorkspaceEnv;
 };
 
 export type EditorTab = {
@@ -33,6 +40,8 @@ export type EditorTab = {
   title: string;
   path: string;
   dirty: boolean;
+  /** Workspace the file lives in (so saving uses the right local/remote fs). */
+  env: WorkspaceEnv;
   /**
    * True while the tab is in the transient "preview" state — opened by a
    * single-click in the explorer and not yet pinned by the user. A preview tab
@@ -144,6 +153,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         cwd: initial?.cwd,
         paneTree: { kind: "leaf", id: leafId, cwd: initial?.cwd },
         activeLeafId: leafId,
+        env: currentWorkspaceEnv(),
       },
     ];
   });
@@ -167,6 +177,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         cwd,
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
+        env: currentWorkspaceEnv(),
       },
     ]);
     setActiveId(tabId);
@@ -186,6 +197,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           cwd,
           paneTree: { kind: "leaf", id: leafId, cwd },
           activeLeafId: leafId,
+          env: currentWorkspaceEnv(),
         },
       ]);
       setActiveId(tabId);
@@ -207,6 +219,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
         paneTree: { kind: "leaf", id: leafId, cwd },
         activeLeafId: leafId,
         private: true,
+        env: currentWorkspaceEnv(),
       },
     ]);
     setActiveId(tabId);
@@ -251,6 +264,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
             path,
             dirty: false,
             preview: false,
+            env: currentWorkspaceEnv(),
           } satisfies EditorTab,
         ];
       } else {
@@ -285,6 +299,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           path,
           dirty: false,
           preview: true,
+          env: currentWorkspaceEnv(),
         };
         if (previewIdx === -1) return [...curr, tab];
         const next = [...curr];
@@ -787,6 +802,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
           cwd,
           paneTree: { kind: "leaf", id: leafId, cwd },
           activeLeafId: leafId,
+          env: currentWorkspaceEnv(),
         },
       ];
     });

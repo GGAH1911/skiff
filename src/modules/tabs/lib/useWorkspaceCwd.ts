@@ -19,6 +19,11 @@ export function useWorkspaceCwd(
     }
   }, [activeTab]);
 
+  // The explorer follows the active terminal's cwd. For SSH workspaces the
+  // terminal is a real remote shell (see pty::shell_init), so its cwd — fed
+  // back via OSC 7 — is the remote path, and `cd` moves the explorer just like
+  // it does locally. Before any terminal reports a cwd we fall back to `home`
+  // (the workspace home, remote or local).
   const explorerRoot = useMemo<string | null>(() => {
     if (activeTab?.kind === "terminal" && activeTab.cwd) return activeTab.cwd;
     if (lastTerminalCwd.current) return lastTerminalCwd.current;

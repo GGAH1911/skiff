@@ -56,13 +56,23 @@ pub fn fs_grep(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
+    let cap = max_results
+        .unwrap_or(DEFAULT_MAX_RESULTS)
+        .clamp(1, HARD_MAX_RESULTS);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::grep(
+            conn,
+            &pattern,
+            &root,
+            glob.as_deref().unwrap_or(&[]),
+            case_insensitive.unwrap_or(false),
+            cap,
+        );
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
-    let cap = max_results
-        .unwrap_or(DEFAULT_MAX_RESULTS)
-        .clamp(1, HARD_MAX_RESULTS);
 
     let matcher = RegexMatcherBuilder::new()
         .case_insensitive(case_insensitive.unwrap_or(false))
@@ -190,11 +200,14 @@ pub fn fs_glob(
         return Err("empty pattern".into());
     }
     let workspace = WorkspaceEnv::from_option(workspace);
+    let cap = max_results.unwrap_or(500).clamp(1, HARD_MAX_RESULTS);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::glob(conn, &pattern, &root, cap);
+    }
     let root_path = resolve_path(&root, &workspace);
     if !root_path.is_dir() {
         return Err(format!("not a directory: {root}"));
     }
-    let cap = max_results.unwrap_or(500).clamp(1, HARD_MAX_RESULTS);
 
     let glob = Glob::new(&pattern).map_err(|e| format!("bad glob: {e}"))?;
     let mut gb = GlobSetBuilder::new();

@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { currentWorkspaceEnv } from "@/modules/workspace";
+import {
+  currentWorkspaceEnv,
+  useWorkspaceEnvStore,
+  workspaceScopeKey,
+} from "@/modules/workspace";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { listenFsChanged, watchAdd, watchRemove } from "./watch";
 
@@ -68,6 +72,9 @@ type Options = {
 export function useFileTree(rootPath: string | null, options?: Options) {
   const showHidden = usePreferencesStore((s) => s.showHidden);
   const showHiddenRef = useRef(showHidden);
+  // Re-scope the tree when the workspace changes (local ⇄ SSH ⇄ WSL), even if
+  // `rootPath` happens to be identical — the files live on a different host.
+  const workspaceScope = useWorkspaceEnvStore((s) => workspaceScopeKey(s.env));
   const [nodes, setNodes] = useState<TreeState>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(
@@ -186,7 +193,9 @@ export function useFileTree(rootPath: string | null, options?: Options) {
         watchedRef.current.clear();
       }
     };
-  }, [rootPath, fetchChildren]);
+    // `workspaceScope` is a dep so switching tabs across workspaces re-reads the
+    // tree under the new (local/remote) filesystem.
+  }, [rootPath, fetchChildren, workspaceScope]);
 
   useEffect(() => {
     let alive = true;

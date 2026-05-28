@@ -215,6 +215,12 @@ pub enum WorkspaceEnv {
     Wsl {
         distro: String,
     },
+    /// A live SSH connection (see `modules::ssh`). `conn` is the connection id
+    /// returned by `ssh_connect` (`user@host:port`). Paths are remote absolute
+    /// POSIX paths handled over SFTP, not local filesystem paths.
+    Ssh {
+        conn: String,
+    },
 }
 
 impl WorkspaceEnv {
@@ -224,6 +230,14 @@ impl WorkspaceEnv {
 
     pub fn is_wsl(&self) -> bool {
         matches!(self, Self::Wsl { .. })
+    }
+
+    /// `Some(conn_id)` when this is a remote SSH workspace.
+    pub fn ssh_conn(&self) -> Option<&str> {
+        match self {
+            Self::Ssh { conn } => Some(conn.as_str()),
+            _ => None,
+        }
     }
 }
 
@@ -239,6 +253,10 @@ pub fn resolve_path(path: &str, workspace: &WorkspaceEnv) -> PathBuf {
     match workspace {
         WorkspaceEnv::Local => PathBuf::from(path),
         WorkspaceEnv::Wsl { distro } => wsl_path_to_host(distro, path),
+        // SSH paths are remote and never touch the local filesystem; callers
+        // dispatch to `modules::ssh` before reaching here. Returned only so the
+        // match stays exhaustive.
+        WorkspaceEnv::Ssh { .. } => PathBuf::from(path),
     }
 }
 

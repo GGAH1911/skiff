@@ -31,6 +31,9 @@ pub fn fs_read_dir(
     workspace: Option<WorkspaceEnv>,
 ) -> Result<Vec<DirEntry>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::read_dir(conn, &path, show_hidden);
+    }
     let root = resolve_path(&path, &workspace);
     let read = std::fs::read_dir(&root).map_err(|e| {
         log::debug!("fs_read_dir({}) failed: {e}", root.display());
@@ -106,6 +109,9 @@ pub fn list_subdirs(
     workspace: Option<WorkspaceEnv>,
 ) -> Result<Vec<String>, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::list_subdirs(conn, &path, show_hidden);
+    }
     let root = resolve_path(&path, &workspace);
     let read = std::fs::read_dir(&root).map_err(|e| {
         log::debug!("list_subdirs({}) read_dir failed: {e}", root.display());

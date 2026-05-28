@@ -11,6 +11,12 @@
   unset _terax_user_zdotdir
 }
 
+# Put the `terax` CLI on PATH (after the user's rc so it isn't clobbered) so
+# agents in this terminal can run `terax new-terminal …`, `terax list`.
+if [[ -n "$TERAX_BIN" && ":$PATH:" != *":$TERAX_BIN:"* ]]; then
+  export PATH="$TERAX_BIN:$PATH"
+fi
+
 # Re-source guard within a single shell (e.g. user runs `source ~/.zshrc`).
 # This is NOT exported, so each nested zsh installs its own hooks — desired,
 # since every interactive shell needs its own prompt integration.

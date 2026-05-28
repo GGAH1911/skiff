@@ -104,6 +104,7 @@ import {
 import { UpdaterDialog } from "@/modules/updater";
 import {
   currentWorkspaceEnv,
+  getSshHome,
   getWslHome,
   LOCAL_WORKSPACE,
   useWorkspaceEnvStore,
@@ -114,7 +115,14 @@ import { homeDir } from "@tauri-apps/api/path";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { SearchAddon } from "@xterm/addon-search";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
 type TuiWaitResult = "ready" | "gone" | "timeout";
@@ -176,6 +184,14 @@ function readSidebarView(): SidebarViewId {
   return "explorer";
 }
 
+/** Structural equality for two workspace environments. */
+function envEquals(a: WorkspaceEnv, b: WorkspaceEnv): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "wsl" && b.kind === "wsl") return a.distro === b.distro;
+  if (a.kind === "ssh" && b.kind === "ssh") return a.conn === b.conn;
+  return true; // both local
+}
+
 export default function App() {
   const {
     tabs,
@@ -202,7 +218,6 @@ export default function App() {
     splitActivePane,
     closeActivePane,
     closePaneByLeaf,
-    resetWorkspace,
   } = useTabs(getLaunchDir() ? { cwd: getLaunchDir() } : undefined);
 
   // Mirror `tabs` into a ref so callbacks scheduled with `setTimeout`
@@ -321,6 +336,9 @@ export default function App() {
   }, [persistSidebarView, sidebarView]);
 
   const [home, setHome] = useState<string | null>(null);
+  // The local machine's home, preserved across workspace switches so we can
+  // restore it synchronously when the active tab is a local-workspace tab.
+  const localHomeRef = useRef<string | null>(null);
   const [pendingCloseTab, setPendingCloseTab] = useState<number | null>(null);
   const workspaceEnv = useWorkspaceEnvStore((s) => s.env);
   const setWorkspaceEnv = useWorkspaceEnvStore((s) => s.setEnv);
@@ -333,6 +351,7 @@ export default function App() {
     homeDir()
       .then(async (p) => {
         const normalized = p.replace(/\\/g, "/");
+        localHomeRef.current = normalized;
         setHome(normalized);
         try {
           await native.workspaceAuthorize(normalized);
@@ -343,25 +362,30 @@ export default function App() {
       .catch(() => setHome(null));
   }, []);
 
+  // Selecting a workspace from the status-bar selector now OPENS or FOCUSES a
+  // tab in that workspace instead of resetting everything — so a local tab and
+  // an SSH tab can coexist, and switching tabs swaps the explorer (see the
+  // active-tab sync effect below).
   const switchWorkspace = useCallback(
     async (env: WorkspaceEnv) => {
-      if (
-        env.kind === workspaceEnv.kind &&
-        (env.kind === "local" ||
-          (workspaceEnv.kind === "wsl" && env.distro === workspaceEnv.distro))
-      ) {
+      if (envEquals(env, workspaceEnv)) {
         return;
       }
-      const dirty = tabsRef.current.some((t) => t.kind === "editor" && t.dirty);
-      if (dirty) {
-        window.alert("Save or close unsaved editor tabs before switching workspace.");
-        return;
+      // Reuse an existing terminal tab for this workspace if one is open.
+      const existing = tabsRef.current.find(
+        (t) => t.kind === "terminal" && envEquals(t.env, env),
+      );
+      if (existing) {
+        setActiveId(existing.id);
+        return; // active-tab effect syncs the global env + home
       }
 
       let nextHome: string | null = null;
       try {
         if (env.kind === "wsl") {
           nextHome = await getWslHome(env.distro);
+        } else if (env.kind === "ssh") {
+          nextHome = await getSshHome(env.conn);
         } else {
           nextHome = (await homeDir()).replace(/\\/g, "/");
         }
@@ -370,27 +394,51 @@ export default function App() {
         return;
       }
 
-      for (const id of liveLeavesRef.current) disposeSession(id);
-      searchAddons.current.clear();
-      terminalRefs.current.clear();
-      editorRefs.current.clear();
-      previewRefs.current.clear();
-      setActiveSearchAddon(null);
-      setActiveEditorHandle(null);
+      // Set the global workspace BEFORE creating the tab so the new tab is
+      // stamped with this env and its PTY spawns in it. Existing tabs are left
+      // untouched.
       setWorkspaceEnv(env.kind === "local" ? LOCAL_WORKSPACE : env);
       setHome(nextHome);
       setLaunchCwd(nextHome);
-      if (nextHome) {
+      // SSH paths are remote; the local workspace registry can't canonicalize
+      // them, so skip authorization (the fs commands operate over SFTP).
+      if (nextHome && env.kind !== "ssh") {
         try {
           await native.workspaceAuthorize(nextHome);
         } catch {
           // Non-fatal — git panel will surface "not authorized" if needed.
         }
       }
-      resetWorkspace(nextHome ?? undefined);
+      newTab(nextHome ?? undefined);
     },
-    [workspaceEnv, setWorkspaceEnv, resetWorkspace],
+    [workspaceEnv, setWorkspaceEnv, setActiveId, newTab],
   );
+
+  // Keep the global workspace in sync with the ACTIVE tab's workspace so the
+  // file explorer, fs operations and breadcrumb follow whichever tab is
+  // focused. Terminal and editor tabs carry an `env`; other tab kinds leave the
+  // current workspace as-is. useLayoutEffect (not useEffect) so the env is set
+  // BEFORE the explorer's passive read fires — otherwise it reads the new
+  // tab's path under the old workspace and errors.
+  useLayoutEffect(() => {
+    const t = tabs.find((x) => x.id === activeId);
+    if (!t || (t.kind !== "terminal" && t.kind !== "editor")) return;
+    const env = t.env;
+    if (envEquals(env, workspaceEnv)) return;
+    setWorkspaceEnv(env.kind === "local" ? LOCAL_WORKSPACE : env);
+    const nextHome =
+      env.kind === "ssh"
+        ? (useWorkspaceEnvStore
+            .getState()
+            .sshConns.find((c) => c.id === env.conn)?.home ?? null)
+        : env.kind === "local"
+          ? localHomeRef.current
+          : null;
+    if (nextHome) {
+      setHome(nextHome);
+      setLaunchCwd(nextHome);
+    }
+  }, [activeId, tabs, workspaceEnv, setWorkspaceEnv]);
   useEffect(() => {
     native
       .workspaceCurrentDir()
@@ -623,6 +671,73 @@ export default function App() {
     tabs,
     launchCwd ?? home,
   );
+
+  // ── terax CLI control ───────────────────────────────────────────────
+  // The Rust socket server forwards `terax <cmd>` requests here (the frontend
+  // owns tabs/terminals). We service them and reply via `cli_respond`. Latest
+  // state is read through a ref so the listener subscribes only once.
+  const cliCtxRef = useRef({ tabs, activeId, explorerRoot, home, launchCwd });
+  cliCtxRef.current = { tabs, activeId, explorerRoot, home, launchCwd };
+  useEffect(() => {
+    const unlistenPromise = getCurrentWebviewWindow().listen<{
+      id: string;
+      request: {
+        cmd?: string;
+        cwd?: string | null;
+        title?: string | null;
+        run?: string;
+      };
+    }>("terax://cli-request", async (ev) => {
+      const { id, request } = ev.payload;
+      const respond = (result: unknown) =>
+        void invoke("cli_respond", { id, result: JSON.stringify(result) });
+      try {
+        if (request?.cmd === "list") {
+          const { tabs: ts, activeId: aid } = cliCtxRef.current;
+          const list = ts.flatMap((t) =>
+            t.kind === "terminal"
+              ? [
+                  {
+                    id: t.id,
+                    title: t.title,
+                    cwd: t.cwd ?? null,
+                    workspace:
+                      t.env.kind === "ssh" ? `ssh:${t.env.conn}` : t.env.kind,
+                    active: t.id === aid,
+                  },
+                ]
+              : [],
+          );
+          respond({ output: JSON.stringify(list, null, 2) });
+          return;
+        }
+        if (request?.cmd === "new-terminal") {
+          const ctx = cliCtxRef.current;
+          const cwd =
+            request.cwd || ctx.explorerRoot || ctx.launchCwd || ctx.home || null;
+          const run = (request.run ?? "").trim();
+          const title = request.title || (run ? run.split(/\s+/)[0] : "shell");
+          const { tabId, leafId } = newAgentTab(cwd ?? undefined, title);
+          if (run) {
+            void (async () => {
+              await whenSessionReady(leafId);
+              writeToSession(leafId, `${run}\r`);
+            })();
+          }
+          respond({
+            output: `opened terminal ${tabId}${run ? ` running: ${run}` : ""}`,
+          });
+          return;
+        }
+        respond({ error: `unknown command: ${request?.cmd ?? "(none)"}` });
+      } catch (e) {
+        respond({ error: String(e) });
+      }
+    });
+    return () => {
+      void unlistenPromise.then((un) => un());
+    };
+  }, [newAgentTab, whenSessionReady, writeToSession]);
 
   useEffect(() => {
     setActiveSearchAddon(

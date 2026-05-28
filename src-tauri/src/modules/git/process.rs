@@ -47,6 +47,10 @@ fn workspace_cache_key(workspace: &WorkspaceEnv) -> String {
     match workspace {
         WorkspaceEnv::Local => "local".into(),
         WorkspaceEnv::Wsl { distro } => format!("wsl:{distro}"),
+        // Source control over SSH is not yet remoted; git still runs against
+        // the local binary. Keyed distinctly so its availability check is
+        // cached separately.
+        WorkspaceEnv::Ssh { conn } => format!("ssh:{conn}"),
     }
 }
 

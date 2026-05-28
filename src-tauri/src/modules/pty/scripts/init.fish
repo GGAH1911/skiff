@@ -9,6 +9,12 @@ set -g __TERAX_HOOKS_LOADED 1
 
 set -g __TERAX_HOST (uname -n 2>/dev/null; or echo localhost)
 
+# Put the `terax` CLI on PATH so agents in this terminal can run
+# `terax new-terminal …`, `terax list`.
+if set -q TERAX_BIN; and not contains -- $TERAX_BIN $PATH
+    set -gx PATH $TERAX_BIN $PATH
+end
+
 # URL-encode a path keeping `/` intact so it stays valid inside file://.
 function __terax_urlencode_path
     set -l parts (string split '/' -- $argv[1])

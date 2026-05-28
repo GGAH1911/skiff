@@ -51,6 +51,13 @@ pub fn build_command(
     cwd: Option<String>,
     workspace: WorkspaceEnv,
 ) -> Result<CommandBuilder, String> {
+    // Remote (SSH) workspace: the terminal is the local `ssh` client driving a
+    // real remote shell, so `cd` on the remote flows back via OSC 7 and the
+    // file explorer follows it. Built cross-platform (ssh ships on macOS/Linux
+    // and modern Windows).
+    if let WorkspaceEnv::Ssh { conn } = &workspace {
+        return crate::modules::ssh::build_terminal_command(conn, cwd);
+    }
     #[cfg(unix)]
     {
         let _ = workspace;
@@ -86,6 +93,13 @@ fn apply_common(cmd: &mut CommandBuilder, cwd: Option<String>) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERAX_TERMINAL", "1");
+    // Let the `terax` CLI (and agents like Claude Code) reach this app instance:
+    // TERAX_SOCK = control socket, TERAX_BIN = dir holding the `terax` shim that
+    // the shell-integration scripts prepend to PATH.
+    cmd.env("TERAX_SOCK", crate::modules::cli::socket_path());
+    if let Some(bin) = crate::modules::cli::cli_bin_dir() {
+        cmd.env("TERAX_BIN", bin);
+    }
     ensure_utf8_locale(cmd);
 
     let resolved_cwd = cwd

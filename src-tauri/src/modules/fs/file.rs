@@ -46,6 +46,9 @@ pub struct FileStat {
 #[tauri::command]
 pub fn fs_read_file(path: String, workspace: Option<WorkspaceEnv>) -> Result<ReadResult, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::read_file(conn, &path);
+    }
     let p = resolve_path(&path, &workspace);
     let meta = std::fs::metadata(&p).map_err(|e| {
         log::debug!("fs_read_file stat({}) failed: {e}", p.display());
@@ -107,6 +110,17 @@ pub fn fs_write_file(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        crate::modules::ssh::write_file(conn, &path, &content)?;
+        let _ = app.emit(
+            "fs:file-written",
+            FileWrittenEvent {
+                path: path.clone(),
+                source,
+            },
+        );
+        return Ok(());
+    }
     let target = resolve_path(&path, &workspace);
     let original_permissions = fs::metadata(&target).ok().map(|m| m.permissions());
     write_atomic(&target, content.as_bytes()).map_err(|e| {
@@ -131,6 +145,9 @@ pub fn fs_write_file(
 #[tauri::command]
 pub fn fs_canonicalize(path: String, workspace: Option<WorkspaceEnv>) -> Result<String, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::canonicalize(conn, &path);
+    }
     let p = resolve_path(&path, &workspace);
     let canon = std::fs::canonicalize(&p).map_err(|e| e.to_string())?;
     Ok(super::to_canon(&canon))
@@ -139,6 +156,9 @@ pub fn fs_canonicalize(path: String, workspace: Option<WorkspaceEnv>) -> Result<
 #[tauri::command]
 pub fn fs_stat(path: String, workspace: Option<WorkspaceEnv>) -> Result<FileStat, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
+    if let Some(conn) = workspace.ssh_conn() {
+        return crate::modules::ssh::stat(conn, &path);
+    }
     let p = resolve_path(&path, &workspace);
     let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
     let kind = if meta.is_dir() {
