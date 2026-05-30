@@ -74,7 +74,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCQUJGRDhBQjYwRTM0NjkKUldScE5BNjJpdjJyT3dIN0dqbUpHaDA4QW1GaDVmTTllRXdZVk96dFNTRUZ3Y2hiVGszYjFqRloK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCNThDRThCQkI4OEI3RDkKUldUWnQ0aTdpODVZSzk1ZzI0UUZhZGV4bVgzd1BWTWVoMUtZNWJIREo1TC8xY1NrNFNjekFxeUoK",
       "endpoints": [
         "https://github.com/ggah1911/skiff/releases/latest/download/latest.json"
       ]
