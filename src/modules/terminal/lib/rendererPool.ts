@@ -14,6 +14,16 @@ import {
   terminalWordNavigationSequence,
 } from "./keymap";
 
+// WebKit (WKWebView on macOS, WebKitGTK on Linux) doesn't fire JS composition
+// events for CJK IMEs and reports composing keys as keyCode 229, which breaks
+// xterm.js's IME handling. We take over IME forwarding there. Chromium/WebView2
+// (Windows) fires composition events normally, so we leave xterm's native path
+// alone. Edge/Chrome UAs include "Chrome"; Safari/WebKit UAs do not.
+const IS_WEBKIT =
+  typeof navigator !== "undefined" &&
+  /AppleWebKit/.test(navigator.userAgent) &&
+  !/Chrome|Chromium|Edg/.test(navigator.userAgent);
+
 export const POOL_MAX_SIZE = 5;
 const FIT_DEBOUNCE_MS = 8;
 const PTY_RESIZE_DEBOUNCE_MS = 256;
@@ -159,59 +169,73 @@ function createSlot(): Slot {
 
   attachWebgl(slot);
 
-  // CJK IME (Korean / Japanese / Chinese) input. WebKit — the engine behind
-  // Tauri's webview on macOS/Linux — does NOT fire composition events and
-  // reports each composing keystroke as keyCode 229 with `isComposing` false.
-  // xterm.js relies on composition events + keyCode 229, so it forwards only
-  // the FIRST jamo of each syllable (it drops the `insertReplacementText`
-  // updates that build the syllable in place), turning "안녕" into "ㅇㄴ".
+  // CJK IME (Korean / Japanese / Chinese) input on WebKit. WebKit doesn't fire
+  // JS composition events and reports composing keys with an UNRELIABLE keyCode
+  // (the onset jamo often arrives as keyCode != 229), and its textarea `value`
+  // is inconsistent (it sometimes re-includes already-committed text). So we
+  // cannot trust the keydown classification OR the textarea value.
   //
-  // Fix: mirror the textarea to the PTY ourselves. xterm still forwards plain
-  // `insertText` (appends, including ASCII), so for every OTHER input type
-  // (insertReplacementText, deletes, …) we send erase (DEL) + the new suffix so
-  // the PTY always matches the textarea. On engines that DO fire composition
-  // events (WebView2/Chromium), `composing` is true and xterm owns the flow —
-  // we then stay out of the way to avoid double input.
-  let composing = false;
-  let imeMirror = "";
+  // Instead we reconstruct IME input from the only reliable signals: the input
+  // event's `data` (the current syllable) and `inputType` (insertText = a NEW
+  // syllable starts, the previous one is committed; insertReplacementText = the
+  // CURRENT syllable is rebuilt in place). xterm still forwards the onset jamo
+  // to the PTY via term.onData; we dedup that per-keystroke (`forward`) so it is
+  // sent exactly once.
+  let lastSyl = ""; // the current (uncommitted) syllable as shown on the PTY
+  let forward = ""; // chars xterm forwarded via onData during THIS keystroke
+  let inputFired = false; // did an input event fire during THIS keystroke
+  let hadOnData = false; // did xterm send anything during THIS keystroke
   const ta = term.textarea;
-  ta?.addEventListener("compositionstart", () => {
-    composing = true;
-  });
-  ta?.addEventListener("compositionend", () => {
-    composing = false;
-  });
+
+  // Reconcile the on-PTY region `region` to the desired `next` by erasing the
+  // changed tail and re-sending the new tail. Returns the bytes to send.
+  const reconcile = (region: string, next: string): string => {
+    let common = 0;
+    const max = Math.min(region.length, next.length);
+    while (common < max && region[common] === next[common]) common++;
+    return "\x7f".repeat(region.length - common) + next.slice(common);
+  };
+
   ta?.addEventListener("input", (e) => {
-    const value = ta.value;
-    // `insertText` (and anything while real composition events are firing) is
-    // already forwarded by xterm — just keep our mirror aligned.
-    if ((e as InputEvent).inputType === "insertText" || composing) {
-      imeMirror = value;
+    if (!IS_WEBKIT) return;
+    inputFired = true;
+    const inputType = (e as InputEvent).inputType;
+    // Paste / drop are handled by xterm; just end any composition.
+    if (inputType === "insertFromPaste" || inputType === "insertFromDrop") {
+      lastSyl = "";
+      forward = "";
       return;
     }
-    // xterm dropped this edit (IME syllable rebuild, delete, …). Reconcile the
-    // PTY with the textarea: erase the changed tail, then send the new tail.
-    let common = 0;
-    const max = Math.min(imeMirror.length, value.length);
-    while (common < max && imeMirror[common] === value[common]) common++;
-    const out = "\x7f".repeat(imeMirror.length - common) + value.slice(common);
-    imeMirror = value;
+    const data = (e as InputEvent).data ?? "";
+    // insertText → a new syllable begins (the previous one is committed and must
+    // not be touched), so the region we reconcile is just what xterm forwarded
+    // for THIS onset. Otherwise we rebuild the current syllable in place.
+    const region = (inputType === "insertText" ? "" : lastSyl) + forward;
+    const out = reconcile(region, data);
+    lastSyl = data;
+    forward = "";
     if (!out) return;
     const leafId = slot.currentLeafId;
     if (leafId !== null) adapter?.resolveLeaf(leafId)?.writeToPty(out);
   });
 
   term.attachCustomKeyEventHandler((event) => {
-    // While an IME composition is in flight, don't let xterm process the key —
-    // returning false stops xterm's broken keyCode-229 textarea-diff path; the
-    // textarea `input` listener above is the single source of truth for IME
-    // text. (keyCode 229 covers WebKit, the others cover composition engines.)
-    if (
-      composing ||
-      event.isComposing ||
-      event.keyCode === 229 ||
-      event.key === "Process"
-    ) {
+    const isComposeKey =
+      event.isComposing || event.keyCode === 229 || event.key === "Process";
+    if (IS_WEBKIT && event.type === "keydown") {
+      // A keydown starts a new keystroke. If the PREVIOUS keystroke sent bytes
+      // to the PTY (hadOnData) but produced no input event (!inputFired), it was
+      // a committed character (ASCII / space / Enter) — finalize the current
+      // syllable so the next IME composition starts fresh.
+      if (hadOnData && !inputFired) lastSyl = "";
+      forward = "";
+      inputFired = false;
+      hadOnData = false;
+    }
+    if (IS_WEBKIT && isComposeKey) {
+      // WebKit: our input listener owns IME text. Returning false stops xterm's
+      // broken keyCode-229 path; its separate input-event forward still fires
+      // and we absorb it via term.onData.
       return false;
     }
     const leafId = slot.currentLeafId;
@@ -267,6 +291,19 @@ function createSlot(): Slot {
   });
 
   term.onData((data) => {
+    // term.onData is user input only (shell output arrives via term.write — no
+    // feedback loop). Track what xterm forwards during the current keystroke so
+    // the input handler can dedup the onset jamo it also forwards. Control
+    // sequences (Enter / Ctrl-C / arrows) commit the line → drop the syllable.
+    if (IS_WEBKIT && data) {
+      hadOnData = true;
+      if (/[\x00-\x1f\x7f]/.test(data)) {
+        lastSyl = "";
+        forward = "";
+      } else {
+        forward += data;
+      }
+    }
     const leafId = slot.currentLeafId;
     if (leafId === null) return;
     adapter?.resolveLeaf(leafId)?.writeToPty(data);
