@@ -1,6 +1,7 @@
 import { detectMonoFontFamily } from "@/lib/fonts";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { buildTerminalTheme } from "@/styles/terminalTheme";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -187,6 +188,93 @@ function createSlot(): Slot {
   let hadOnData = false; // did xterm send anything during THIS keystroke
   const ta = term.textarea;
 
+  // ── Input-mode badge (한 / A) flashed ONLY when the LANGUAGE KEY is hit ──
+  // The trigger is pressing the 한/영 toggle (Caps Lock on macOS Korean, or the
+  // Lang1/Lang2/HangulMode keys), NOT typing. There is no API to read the OS
+  // input source, so we track the mode ourselves: the toggle key flips/sets it
+  // and flashes the badge near the cursor; typing only SILENTLY syncs the
+  // tracked mode (no flash) so the next toggle shows the right label.
+  const HANGUL = /[ᄀ-ᇿ㄰-㆏가-힣]/;
+  const modeBadge = document.createElement("div");
+  modeBadge.setAttribute("data-terax-ime-badge", "");
+  // Claude-desktop-style pill: rounded, dark translucent, large white glyph,
+  // soft pop-in. Positioned just BELOW the cursor cell (below is usually empty,
+  // so it never covers existing output, and it tracks where the eye is).
+  modeBadge.style.cssText = [
+    "position:absolute",
+    "z-index:10",
+    "pointer-events:none",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "min-width:26px",
+    "height:26px",
+    "padding:0 7px",
+    "border-radius:8px",
+    "font-size:14px",
+    "font-weight:600",
+    "line-height:1",
+    "color:#fff",
+    "background:rgba(38,38,42,0.92)",
+    "box-shadow:0 2px 10px rgba(0,0,0,0.35)",
+    "opacity:0",
+    "transition:opacity .14s ease,transform .14s ease",
+    "white-space:nowrap",
+  ].join(";");
+  let badgeHideTimer: ReturnType<typeof setTimeout> | null = null;
+  let imeMode: "ko" | "en" = "en"; // tracked input mode (starts English)
+  // Silently keep the tracked mode in sync with what's actually typed.
+  const syncMode = (mode: "ko" | "en") => {
+    imeMode = mode;
+  };
+  // Flash the badge for the CURRENT tracked mode, just below the cursor (or
+  // above it when the cursor is on one of the last rows, so it stays on-screen).
+  const flashModeBadge = () => {
+    if (!IS_WEBKIT) return;
+    const screen = term.element?.querySelector(
+      ".xterm-screen",
+    ) as HTMLElement | null;
+    if (!screen) return;
+    if (modeBadge.parentElement !== screen) screen.appendChild(modeBadge);
+    // Cursor pixel position from cell coordinates (reliable even when not
+    // composing, unlike the hidden textarea's offset).
+    const cellW = screen.clientWidth / Math.max(1, term.cols);
+    const cellH = screen.clientHeight / Math.max(1, term.rows);
+    const cur = term.buffer.active;
+    const x = cur.cursorX * cellW + cellW / 2; // center of the cursor cell
+    const below = cur.cursorY < term.rows - 2; // room beneath the cursor?
+    const y = below
+      ? (cur.cursorY + 1) * cellH + 2 // just under the cursor cell
+      : cur.cursorY * cellH - 2; // fall back to above on the last rows
+    const lift = below ? "8%" : "-135%";
+    modeBadge.textContent = imeMode === "ko" ? "한" : "A";
+    modeBadge.style.left = `${x}px`;
+    modeBadge.style.top = `${y}px`;
+    modeBadge.style.opacity = "1";
+    modeBadge.style.transform = `translate(-50%,${lift}) scale(1)`;
+    if (badgeHideTimer) clearTimeout(badgeHideTimer);
+    badgeHideTimer = setTimeout(() => {
+      modeBadge.style.opacity = "0";
+      modeBadge.style.transform = `translate(-50%,${lift}) scale(0.9)`;
+    }, 1000);
+  };
+  // Flash with an explicit mode (driven by the OS input-source change event).
+  const flashMode = (mode: "ko" | "en") => {
+    imeMode = mode;
+    flashModeBadge();
+  };
+  // The Rust backend (macOS) emits the OS keyboard input-source language on
+  // every change. Flash the badge on the FOCUSED terminal; others just sync.
+  // The `initial` event sets the starting mode without flashing.
+  void listen<{ lang: string; initial: boolean }>("terax://input-source", (ev) => {
+    const mode: "ko" | "en" = /^ko/i.test(ev.payload.lang) ? "ko" : "en";
+    const focused =
+      slot.currentLeafId !== null &&
+      !!adapter?.isLeafFocused(slot.currentLeafId);
+    if (ev.payload.initial || !focused) syncMode(mode);
+    else flashMode(mode);
+  });
+
   // Reconcile the on-PTY region `region` to the desired `next` by erasing the
   // changed tail and re-sending the new tail. Returns the bytes to send.
   const reconcile = (region: string, next: string): string => {
@@ -207,6 +295,9 @@ function createSlot(): Slot {
       return;
     }
     const data = (e as InputEvent).data ?? "";
+    if (inputType === "insertReplacementText" || HANGUL.test(data)) {
+      syncMode("ko");
+    }
     // insertText → a new syllable begins (the previous one is committed and must
     // not be touched), so the region we reconcile is just what xterm forwarded
     // for THIS onset. Otherwise we rebuild the current syllable in place.

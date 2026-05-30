@@ -1,6 +1,6 @@
 pub mod modules;
 
-use modules::{agent, cli, fs, git, net, pty, secrets, shell, ssh, workspace};
+use modules::{agent, cli, fs, git, inputsource, net, pty, secrets, shell, ssh, workspace};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_window_state::StateFlags;
@@ -132,6 +132,9 @@ pub fn run() {
             // Start the `terax` CLI control socket so terminals (and the agents
             // running in them) can drive the app: `terax new-terminal …`, etc.
             cli::start_server(app.handle().clone());
+            // Observe OS keyboard input-source (한/영) changes for the terminal
+            // language badge (macOS; no-op elsewhere).
+            inputsource::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

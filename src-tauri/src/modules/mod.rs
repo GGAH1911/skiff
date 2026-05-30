@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod cli;
 pub mod fs;
+pub mod inputsource;
 pub mod git;
 pub mod net;
 pub mod proc;
