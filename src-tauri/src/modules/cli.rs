@@ -246,7 +246,7 @@ mod server {
         let Ok(exe) = std::env::current_exe() else {
             return;
         };
-        let link = bin.join("terax");
+        let link = bin.join("skiff");
         // Recreate so it tracks the current install location across updates.
         if std::fs::read_link(&link).ok().as_deref() != Some(exe.as_path()) {
             let _ = std::fs::remove_file(&link);

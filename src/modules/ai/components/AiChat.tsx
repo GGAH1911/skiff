@@ -209,7 +209,7 @@ export function AiChatView({
       <Conversation>
         <ConversationContent>
           <ConversationEmptyState
-            title="Ask Terax anything"
+            title="Ask Skiff anything"
             description="Explain command output, fix errors, generate snippets, or run a task."
           />
         </ConversationContent>

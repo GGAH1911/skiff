@@ -152,7 +152,7 @@ export async function buildLanguageModel(
         apiKey: key,
         headers: {
           "HTTP-Referer": "https://terax.ai",
-          "X-Title": "Terax",
+          "X-Title": "Skiff",
         },
       })(resolvedModelId);
       break;
@@ -293,7 +293,7 @@ function buildStableSystem(
     : "";
   const memoryBlock =
     projectMemory && projectMemory.trim().length > 0
-      ? `\n\n## PROJECT — TERAX.md\n${projectMemory.trim()}`
+      ? `\n\n## PROJECT — SKIFF.md\n${projectMemory.trim()}`
       : "";
   return `${base}${memoryBlock}${personaBlock}${customBlock}`;
 }
