@@ -17,7 +17,7 @@ type DistroKey = "arch" | "debian" | "fedora";
 function distroCommand(key: DistroKey, version: string): string {
   switch (key) {
     case "arch":
-      return "yay -S terax-bin";
+      return "yay -S skiff-bin";
     case "debian":
       return `sudo apt install ./Skiff_${version}_amd64.deb`;
     case "fedora":
